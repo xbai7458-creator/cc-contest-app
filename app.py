@@ -301,8 +301,7 @@ elif page == "📤 提交錄音":
 
             with st.spinner("📊 AI 評分中..."):
                 score_result = score_transcript(transcript, main_line)
-                _db2 = __import__("database", fromlist=["database"]).database
-                _db2.update_ai_score(sid, score_result["total"], json.dumps(score_result, ensure_ascii=False))
+                db.update_ai_score(sid, score_result["total"], json.dumps(score_result, ensure_ascii=False))
 
             st.balloons()
             st.success(f"🎉 評分完成！**AI 評分：{score_result['total']} 分**")

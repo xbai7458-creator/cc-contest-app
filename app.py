@@ -198,12 +198,25 @@ elif page == "📤 提交錄音":
 
         # 已提交記錄
         existing = db.get_submissions(cc_name=cc_name)
-        st.markdown(f"**已提交：{len(existing)} 通**")
+        scored_list    = [s for s in existing if s["status"] == "scored"]
+        pending_list  = [s for s in existing if s["status"] != "scored"]
+        st.markdown(f"**已提交：{len(existing)} 通** | ✅ 已評分：{len(scored_list)} | ⏳ 待評：{len(pending_list)}**")
+
         for sub in existing:
-            status_emoji = "✅" if sub["status"] == "scored" else "⏳"
+            is_scored = sub["status"] == "scored"
+            has_audio = bool(sub.get("file_path"))
+            has_text  = bool(sub.get("transcript"))
             comp = db.get_composite_score(sub)
-            admin_str = f" | 管: {sub['admin_score']:.1f}" if sub["admin_score"] is not None else " | 管: 待評"
-            label = f"  {status_emoji} [{sub['main_line']}] AI:{sub['ai_score']:.0f} {admin_str} | **綜合:{comp:.1f}**"
+
+            if is_scored:
+                status_emoji = "✅"
+                admin_str = f" | 管: {sub['admin_score']:.1f}" if sub["admin_score"] is not None else " | 管: 待評"
+                label = f"  {status_emoji} [{sub['main_line']}] AI:{sub['ai_score']:.0f} {admin_str} | **綜合:{comp:.1f}**"
+            else:
+                status_emoji = "⏳"
+                note = "（文字稿）" if not has_audio else "（音頻待轉寫）"
+                label = f"  {status_emoji} [{sub['main_line']}] {note} | 等待評分"
+
             with st.expander(label):
                 # 顯示逐維度診斷報告
                 if sub.get("ai_detail") and sub.get("ai_detail") != "{}":
@@ -231,122 +244,99 @@ elif page == "📤 提交錄音":
                     with st.expander("📄 文字稿"):
                         st.text_area("", sub["transcript"], height=150, disabled=True, label_visibility="collapsed")
 
-        # ── Step 2：上傳錄音 ──────────────────────────────
+        # ── Step 2：填寫文字稿（⭐ 最快，繞過上傳瓶頸）────────────
         st.divider()
-        st.subheader("📤 上傳新錄音")
+        st.subheader("📝 填寫錄音文字稿")
 
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            main_line = st.selectbox(
-                "📌 主線類型",
-                list(MAIN_LINES.keys()),
-                index=0,
-                format_func=lambda x: f"{x}：{MAIN_LINES[x]}"
-            )
-        with col2:
+        st.info("💡 **推薦方式：用手機錄音 → 長按轉文字 → 複製貼上（10秒完成，跳過上傳）**")
+
+        manual_transcript = st.text_area(
+            "📝 請將錄音內容轉寫成文字後貼在此處",
+            placeholder="老師：媽媽您好，我特別想要跟您分享一下......",
+            height=120,
+            key="manual_transcript_main"
+        )
+
+        # ── Step 3：音頻上傳（非必要）──────────────────────
+        with st.expander("🎧 如有音頻檔也可一併上傳（可略過）"):
             uploaded_file = st.file_uploader(
-                "🎧 上傳音頻檔（MP3 / WAV / M4A）",
+                "🎧 上傳音頻（MP3 / WAV / M4A）",
                 type=["mp3", "wav", "m4a", "ogg", "flac"],
             )
-
-        # 文字稿輸入（語音轉文字，Whisper 僅支援本地）
-        manual_transcript = st.text_area(
-            "📝 文字稿（請自行錄音後貼上，或等 AI 自動轉寫）",
-            placeholder="請將錄音內容轉寫成文字後貼在此處...",
-            height=100,
-        )
+            if uploaded_file:
+                size_mb = uploaded_file.size / 1024 / 1024
+                if size_mb > 5:
+                    st.warning(f"⚠️ 檔案 {size_mb:.1f}MB，稍大。上傳可能需要等待。建議：可略過音頻，直接填文字稿提交。")
+                else:
+                    st.caption(f"📎 檔案大小：{size_mb:.1f}MB")
 
         # 阻擋條件：未填中文姓名
         if not matched and not name_cn:
             st.stop()
 
-        if uploaded_file and st.button("🚀 提交錄音", type="primary"):
+        # ── 提交邏輯 ──────────────────────────────────────
+        has_audio = uploaded_file is not None
+        has_text  = bool(manual_transcript.strip())
+
+        if has_text and st.button("🚀 提交評分（文字稿）", type="primary"):
+            # ⭐ 文字稿直提交 → 立即評分，跳過上傳
+            sid = db.add_submission(
+                cc_name, main_line,
+                filename="（文字稿提交）",
+                file_path="",
+                name_cn=name_cn, team=team
+            )
+            transcript = manual_transcript.strip()
+            db.update_transcript(sid, transcript)
+
+            with st.spinner("📊 AI 評分中..."):
+                score_result = score_transcript(transcript, main_line)
+                _db2 = __import__("database", fromlist=["database"]).database
+                _db2.update_ai_score(sid, score_result["total"], json.dumps(score_result, ensure_ascii=False))
+
+            st.balloons()
+            st.success(f"🎉 評分完成！**AI 評分：{score_result['total']} 分**")
+            st.markdown(f"**評語：**{score_result['summary']}")
+            if score_result["suggestions"]:
+                with st.expander("📝 查看改進建議"):
+                    for s in score_result["suggestions"]:
+                        st.write(f"- {s}")
+            with st.expander("📄 查看逐維度 AI 診斷報告"):
+                for dim, data in score_result["dims"].items():
+                    with st.container():
+                        st.markdown(f"**{dim}** `{data['score']}/{data['max']}` — {data['desc']}")
+                        found_high = data.get("found_high", [])
+                        found_normal = data.get("found_normal", [])
+                        missing = data.get("missing_normal", [])
+                        if found_high:  st.success(f"✅ 加分：{' / '.join(found_high[:6])}")
+                        if found_normal: st.write(f"✅ 已提及：{' / '.join(found_normal[:8])}")
+                        if missing:    st.error(f"❌ 缺失：{' / '.join(missing[:5])}")
+                        st.caption(f"💬 {data.get('bonus_summary','—')}")
+                        st.divider()
+            st.rerun()
+
+        elif has_audio and not has_text and st.button("📤 上傳音頻（稍後評分）", type="secondary"):
+            # 僅上傳音頻 → 儲存檔案，顯示等待狀態
             safe_name = re.sub(r'\W+', '_', cc_name)
-            safe_line  = re.sub(r'\W+', '_', main_line)
+            safe_line = re.sub(r'\W+', '_', main_line)
             ts = int(time.time())
             ext = os.path.splitext(uploaded_file.name)[1]
-            # 命名規則：CC姓名_主線_時間戳.擴展名
             stored_name = f"{safe_name}_{safe_line}_{ts}{ext}"
             os.makedirs(UPLOAD_DIR, exist_ok=True)
             file_path = os.path.join(UPLOAD_DIR, stored_name)
             with open(file_path, "wb") as f:
                 f.write(uploaded_file.read())
 
-            sid = db.add_submission(cc_name, main_line, uploaded_file.name, stored_name,
-                                    name_cn=name_cn, team=team)
-            st.success(f"✅ 檔案已上傳，提交成功！")
-
-            # 優先使用手動輸入文字稿，否則嘗試 AI 轉寫
-            transcript = manual_transcript.strip()
-
-            if not transcript:
-                with st.spinner("🤖 AI 正在轉寫錄音（Whisper）..."):
-                    if not WHISPER_OK:
-                        transcript = ""
-                        st.warning("⚠️ AI 轉寫功能僅支援本地運行。請自行將錄音轉為文字後，在下方填入後重新提交評分。")
-                    else:
-                        try:
-                            model = _whisper.load_model("tiny", download_root=os.path.expanduser("~/.cache/whisper"))
-                            result = model.transcribe(file_path, language="zh")
-                            transcript = result["text"]
-                        except Exception as e:
-                            transcript = ""
-                            st.warning(f"⚠️ 轉寫失敗：{e}，請手動填入文字稿")
-                    db.update_transcript(sid, transcript)
-
-            import database as _db
-            if not transcript:
-                st.warning("⚠️ 無文字稿，AI 評分跳過。請在「📝 文字稿」框填入錄音內容後重新提交。")
-                st.info("💡 小技巧：使用手機語音備忘錄/Zoom/騰訊文檔等工具快速將錄音轉為文字")
-            else:
-                with st.spinner("📊 AI 評分中..."):
-                    score_result = score_transcript(transcript, main_line)
-                    _db.update_ai_score(sid, score_result["total"], json.dumps(score_result, ensure_ascii=False))
-
-                st.balloons()
-                st.success(f"🎉 評分完成！**AI 評分：{score_result['total']} 分**")
-                st.markdown(f"**評語：**{score_result['summary']}")
-                if score_result["suggestions"]:
-                    with st.expander("📝 查看改進建議"):
-                        for s in score_result["suggestions"]:
-                            st.write(f"- {s}")
-                with st.expander("📄 查看 AI 轉寫文字稿"):
-                    st.text_area("文字稿", transcript, height=200, disabled=True, label_visibility="collapsed")
-                with st.expander("🔍 查看逐維度 AI 診斷報告（加分 / 減分分析）"):
-                    st.info(f"💡 AI評分：真實計算（維度加權合計），請管理員參考診斷報告給出最終評分")
-                    for dim, data in score_result["dims"].items():
-                        with st.container():
-                            st.markdown(f"#### {dim} `{data['score']}/{data['max']}`")
-                            st.caption(f"📌 {data['desc']}")
-
-                            # ✅ 加分項
-                            found_high = data.get("found_high", [])
-                            if found_high:
-                                st.success(f"✅ **高分表達（加分）：** {' / '.join(found_high[:6])}")
-                            else:
-                                st.warning("⚠️ **高分表達（加分）：** 未找到，建議提升")
-
-                            # ✅ 已提及
-                            found_normal = data.get("found_normal", [])
-                            if found_normal:
-                                st.write(f"✅ **已提及：** {' / '.join(found_normal[:8])}")
-                            else:
-                                st.write("⚠️ **已提及：** 未找到任何基礎話術")
-
-                            # ❌ 缺失
-                            missing = data.get("missing_normal", [])
-                            if missing:
-                                st.error(f"❌ **缺失話術（減分）：** {' / '.join(missing[:5])}")
-                            else:
-                                st.write("✅ **缺失話術：** 無，維度完整")
-
-                            # 💬 維度小結
-                            st.markdown(f"> 💬 {data.get('bonus_summary', '—')}")
-                            st.divider()
-                    if score_result["suggestions"]:
-                        st.markdown("### 📝 AI 改進建議")
-                        for s in score_result["suggestions"]:
-                            st.write(f"- {s}")
+            sid = db.add_submission(
+                cc_name, main_line,
+                uploaded_file.name, stored_name,
+                name_cn=name_cn, team=team
+            )
+            st.success("✅ 檔案已上傳！")
+            st.info(
+                "⏳ **錄音已收到，等待管理員用 Whisper CLI 轉寫後評分。**\n\n"
+                "📌 請稍後回到此頁面查看結果（預計 1-2 工作日內完成）。"
+            )
             st.rerun()
 
 # ════════════════════════════════════════════════════════

@@ -242,7 +242,9 @@ elif page == "📤 提交錄音":
                     st.info("AI 評分尚未完成，請稍候...")
                 if sub.get("transcript"):
                     with st.expander("📄 文字稿"):
-                        st.text_area("", sub["transcript"], height=150, disabled=True, label_visibility="collapsed")
+                        st.text_area("📄 文字稿", sub["transcript"],
+                            height=150, disabled=True, label_visibility="collapsed",
+                            key=f"view_transcript_{sub['id']}")
 
         # ── Step 2：填寫文字稿（⭐ 最快，繞過上傳瓶頸）────────────
         st.divider()

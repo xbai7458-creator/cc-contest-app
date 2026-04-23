@@ -18,6 +18,32 @@ st.set_page_config(
 
 db.init_db()
 
+# ── 全域密碼保護（Streamlit Cloud）──────────────────────
+APP_PASSWORD = str(st.secrets.get("CONTEST_PASSWORD", "cccontest2026"))
+
+def check_app_access():
+    """所有訪問者必須先輸入密碼"""
+    if "app_access_ok" not in st.session_state:
+        st.session_state["app_access_ok"] = False
+
+    if st.session_state["app_access_ok"]:
+        return
+
+    st.title("🏆 CC老師轉介紹話術大賽")
+    st.markdown("---")
+    st.markdown("請輸入參賽密碼進入系統：")
+
+    pw = st.text_input("密碼", type="password", key="pw_input")
+    if pw:
+        if pw == APP_PASSWORD:
+            st.session_state["app_access_ok"] = True
+            st.rerun()
+        else:
+            st.error("❌ 密碼錯誤，請聯繫管理員")
+    st.stop()
+
+check_app_access()
+
 # ── 密碼工具 ────────────────────────────────────────────
 def check_admin():
     if "admin_mode" not in st.session_state:

@@ -748,7 +748,9 @@ elif page == "👑 管理員評分":
                     # 顯示文字稿
                     if sub.get("transcript"):
                         with st.expander("📝 AI 轉寫文字稿", expanded=False):
-                            st.text_area("文字稿", sub["transcript"], height=150, disabled=True, label_visibility="collapsed")
+                            st.text_area("📝 文字稿", sub["transcript"], height=150,
+                                disabled=True, label_visibility="collapsed",
+                                key=f"ai_transcript_{sub['id']}")
 
                     # 顯示 AI 診斷（如果有）
                     ai_detail_raw = sub.get("ai_detail", "{}")

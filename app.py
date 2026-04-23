@@ -143,7 +143,13 @@ if page == "🏠 首頁/說明":
 # ② 提交錄音
 # ════════════════════════════════════════════════════════
 elif page == "📤 提交錄音":
-    import time, whisper, json, re
+    import time, json, re
+    try:
+        import whisper as _whisper
+        WHISPER_OK = True
+    except Exception:
+        WHISPER_OK = False
+        _whisper = None
     from config import TEAMS, CC_TO_TEAM, CC_INFO, ALL_CC_NAMES, ALL_TEAMS, MAIN_LINES, UPLOAD_DIR
     from scoring import score_transcript
 
@@ -243,6 +249,13 @@ elif page == "📤 提交錄音":
                 type=["mp3", "wav", "m4a", "ogg", "flac"],
             )
 
+        # 文字稿輸入（語音轉文字，Whisper 僅支援本地）
+        manual_transcript = st.text_area(
+            "📝 文字稿（請自行錄音後貼上，或等 AI 自動轉寫）",
+            placeholder="請將錄音內容轉寫成文字後貼在此處...",
+            height=100,
+        )
+
         # 阻擋條件：未填中文姓名
         if not matched and not name_cn:
             st.stop()
@@ -263,65 +276,77 @@ elif page == "📤 提交錄音":
                                     name_cn=name_cn, team=team)
             st.success(f"✅ 檔案已上傳，提交成功！")
 
-            with st.spinner("🤖 AI 正在轉寫錄音（Whisper）..."):
-                try:
-                    model = whisper.load_model("tiny", download_root=os.path.expanduser("~/.cache/whisper"))
-                    result = model.transcribe(file_path, language="zh")
-                    transcript = result["text"]
+            # 優先使用手動輸入文字稿，否則嘗試 AI 轉寫
+            transcript = manual_transcript.strip()
+
+            if not transcript:
+                with st.spinner("🤖 AI 正在轉寫錄音（Whisper）..."):
+                    if not WHISPER_OK:
+                        transcript = ""
+                        st.warning("⚠️ AI 轉寫功能僅支援本地運行。請自行將錄音轉為文字後，在下方填入後重新提交評分。")
+                    else:
+                        try:
+                            model = _whisper.load_model("tiny", download_root=os.path.expanduser("~/.cache/whisper"))
+                            result = model.transcribe(file_path, language="zh")
+                            transcript = result["text"]
+                        except Exception as e:
+                            transcript = ""
+                            st.warning(f"⚠️ 轉寫失敗：{e}，請手動填入文字稿")
                     db.update_transcript(sid, transcript)
-                except Exception as e:
-                    transcript = f"[轉寫失敗：{e}]（請管理員手動上傳文字稿）"
-                    db.update_transcript(sid, transcript)
 
-            with st.spinner("📊 AI 評分中..."):
-                import database as _db
-                score_result = score_transcript(transcript, main_line)
-                _db.update_ai_score(sid, score_result["total"], json.dumps(score_result, ensure_ascii=False))
+            import database as _db
+            if not transcript:
+                st.warning("⚠️ 無文字稿，AI 評分跳過。請在「📝 文字稿」框填入錄音內容後重新提交。")
+                st.info("💡 小技巧：使用手機語音備忘錄/Zoom/騰訊文檔等工具快速將錄音轉為文字")
+            else:
+                with st.spinner("📊 AI 評分中..."):
+                    score_result = score_transcript(transcript, main_line)
+                    _db.update_ai_score(sid, score_result["total"], json.dumps(score_result, ensure_ascii=False))
 
-            st.balloons()
-            st.success(f"🎉 評分完成！**AI 評分：{score_result['total']} 分**")
-            st.markdown(f"**評語：**{score_result['summary']}")
-            if score_result["suggestions"]:
-                with st.expander("📝 查看改進建議"):
-                    for s in score_result["suggestions"]:
-                        st.write(f"- {s}")
-            with st.expander("📄 查看 AI 轉寫文字稿"):
-                st.text_area("文字稿", transcript, height=200, disabled=True, label_visibility="collapsed")
-            with st.expander("🔍 查看逐維度 AI 診斷報告（加分 / 減分分析）"):
-                st.info(f"💡 AI評分：真實計算（維度加權合計），請管理員參考診斷報告給出最終評分")
-                for dim, data in score_result["dims"].items():
-                    with st.container():
-                        st.markdown(f"#### {dim} `{data['score']}/{data['max']}`")
-                        st.caption(f"📌 {data['desc']}")
-
-                        # ✅ 加分項
-                        found_high = data.get("found_high", [])
-                        if found_high:
-                            st.success(f"✅ **高分表達（加分）：** {' / '.join(found_high[:6])}")
-                        else:
-                            st.warning("⚠️ **高分表達（加分）：** 未找到，建議提升")
-
-                        # ✅ 已提及
-                        found_normal = data.get("found_normal", [])
-                        if found_normal:
-                            st.write(f"✅ **已提及：** {' / '.join(found_normal[:8])}")
-                        else:
-                            st.write("⚠️ **已提及：** 未找到任何基礎話術")
-
-                        # ❌ 缺失
-                        missing = data.get("missing_normal", [])
-                        if missing:
-                            st.error(f"❌ **缺失話術（減分）：** {' / '.join(missing[:5])}")
-                        else:
-                            st.write("✅ **缺失話術：** 無，維度完整")
-
-                        # 💬 維度小結
-                        st.markdown(f"> 💬 {data.get('bonus_summary', '—')}")
-                        st.divider()
+                st.balloons()
+                st.success(f"🎉 評分完成！**AI 評分：{score_result['total']} 分**")
+                st.markdown(f"**評語：**{score_result['summary']}")
                 if score_result["suggestions"]:
-                    st.markdown("### 📝 AI 改進建議")
-                    for s in score_result["suggestions"]:
-                        st.write(f"- {s}")
+                    with st.expander("📝 查看改進建議"):
+                        for s in score_result["suggestions"]:
+                            st.write(f"- {s}")
+                with st.expander("📄 查看 AI 轉寫文字稿"):
+                    st.text_area("文字稿", transcript, height=200, disabled=True, label_visibility="collapsed")
+                with st.expander("🔍 查看逐維度 AI 診斷報告（加分 / 減分分析）"):
+                    st.info(f"💡 AI評分：真實計算（維度加權合計），請管理員參考診斷報告給出最終評分")
+                    for dim, data in score_result["dims"].items():
+                        with st.container():
+                            st.markdown(f"#### {dim} `{data['score']}/{data['max']}`")
+                            st.caption(f"📌 {data['desc']}")
+
+                            # ✅ 加分項
+                            found_high = data.get("found_high", [])
+                            if found_high:
+                                st.success(f"✅ **高分表達（加分）：** {' / '.join(found_high[:6])}")
+                            else:
+                                st.warning("⚠️ **高分表達（加分）：** 未找到，建議提升")
+
+                            # ✅ 已提及
+                            found_normal = data.get("found_normal", [])
+                            if found_normal:
+                                st.write(f"✅ **已提及：** {' / '.join(found_normal[:8])}")
+                            else:
+                                st.write("⚠️ **已提及：** 未找到任何基礎話術")
+
+                            # ❌ 缺失
+                            missing = data.get("missing_normal", [])
+                            if missing:
+                                st.error(f"❌ **缺失話術（減分）：** {' / '.join(missing[:5])}")
+                            else:
+                                st.write("✅ **缺失話術：** 無，維度完整")
+
+                            # 💬 維度小結
+                            st.markdown(f"> 💬 {data.get('bonus_summary', '—')}")
+                            st.divider()
+                    if score_result["suggestions"]:
+                        st.markdown("### 📝 AI 改進建議")
+                        for s in score_result["suggestions"]:
+                            st.write(f"- {s}")
             st.rerun()
 
 # ════════════════════════════════════════════════════════

@@ -18,6 +18,13 @@ st.set_page_config(
 
 db.init_db()
 
+# ══════════════════════════════════════
+#  錄音自動收集到本機資料夾
+# ══════════════════════════════════════
+# 音頻收集目錄（Streamlit Cloud → /tmp/錄音收集；本地 → 同目錄/錄音收集）
+COLLECT_DIR = os.path.join(os.path.dirname(__file__), "錄音收集")
+os.makedirs(COLLECT_DIR, exist_ok=True)
+
 # ── 全域密碼保護（Streamlit Cloud）──────────────────────
 APP_PASSWORD = str(st.secrets.get("CONTEST_PASSWORD", "cccontest2026"))
 
@@ -338,6 +345,12 @@ elif page == "📤 提交錄音":
             with open(file_path, "wb") as f:
                 f.write(uploaded_file.read())
 
+            # ── 自動存到「錄音收集」資料夾 ──────────────────
+            collect_name = f"{name_cn}_{main_line}_{ts}{ext}"
+            collect_path = os.path.join(COLLECT_DIR, collect_name)
+            with open(collect_path, "wb") as f:
+                f.write(uploaded_file.read())
+
             sid = db.add_submission(
                 cc_name, main_line,
                 uploaded_file.name, stored_name,
@@ -345,7 +358,9 @@ elif page == "📤 提交錄音":
             )
             st.success("✅ 檔案已上傳！")
             st.info(
-                "⏳ **錄音已收到，等待管理員用 Whisper CLI 轉寫後評分。**\n\n"
+                f"📁 已同步存到「錄音收集」資料夾：\n"
+                f"`{collect_name}`\n\n"
+                "⏳ **錄音已收到，等待管理員用 Whisper CLI 轉寫後評分。**\n"
                 "📌 請稍後回到此頁面查看結果（預計 1-2 工作日內完成）。"
             )
             st.rerun()

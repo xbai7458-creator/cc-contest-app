@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.db
+submissions.json
+uploads/
+.DS_Store
+streamlit.log
+.streamlit/secrets.toml

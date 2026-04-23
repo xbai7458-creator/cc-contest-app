@@ -274,6 +274,16 @@ elif page == "📤 提交錄音":
         if not matched and not name_cn:
             st.stop()
 
+        # ── 選擇服務主線 ────────────────────────────────
+        st.divider()
+        main_line = st.selectbox(
+            "🎯 這通電話是什麼類型？（必填）",
+            options=list(MAIN_LINES.keys()),
+            format_func=lambda x: f"{x} — {MAIN_LINES[x]}",
+            index=0,
+            key="main_line_select"
+        )
+
         # ── 提交邏輯 ──────────────────────────────────────
         has_audio = uploaded_file is not None
         has_text  = bool(manual_transcript.strip())

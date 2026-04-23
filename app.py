@@ -861,3 +861,32 @@ elif page == "👑 管理員評分":
                     w.writerow(s)
             st.success(f"已導出：{path}")
             st.download_button("下載 CSV", open(path, "rb"), path, "text/csv")
+
+        st.divider()
+        st.subheader("📦 錄音檔案管理")
+
+        # 收集目錄中的音頻數量
+        import glob
+        audio_files = glob.glob(os.path.join(COLLECT_DIR, "*"))
+        audio_count = len([f for f in audio_files if os.path.isfile(f)])
+        st.info(f"📁 錄音收集資料夾目前有 **{audio_count}** 個音頻檔")
+
+        if audio_count > 0:
+            if st.button("📥 打包下載全部錄音（ZIP）"):
+                import zipfile, io
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for fpath in audio_files:
+                        fname = os.path.basename(fpath)
+                        zf.write(fpath, fname)
+                buf.seek(0)
+                st.success(f"✅ 已打包 {audio_count} 個檔案")
+                st.download_button(
+                    "⬇️ 下載 ZIP",
+                    buf.getvalue(),
+                    f"錄音收集_{len(audio_files)}.zip",
+                    "application/zip"
+                )
+        else:
+            st.info("目前沒有錄音檔，CC 老師上傳後會出現在這裡")
+
